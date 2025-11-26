@@ -15,7 +15,7 @@ public class ChatClient {
 	}
 
 	public void start() throws IOException {
-		System.out.println("Congratulation for successfully setting up your environment for Distributed Systems Exercises!\n");
+		
 		//Initialization of the socket 
 		var socket=new Socket("130.75.202.197",4446);
 		var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
