@@ -1,7 +1,9 @@
 package de.luh.vss.chat.client;
+import de.luh.vss.chat.common.*;
+import java.io.*;
+import java.net.*;
 
-import java.io.IOException;
-
+import de.luh.vss.chat.common.Message;
 public class ChatClient {
 
 	public static void main(String... args) {
@@ -14,9 +16,27 @@ public class ChatClient {
 
 	public void start() throws IOException {
 		System.out.println("Congratulation for successfully setting up your environment for Distributed Systems Exercises!\n");
-		// Use your own user ID (ErgebnisPIN) exclusively to initiate and pass the tests; otherwise the actions will be performed for a different user.
+		//Initialization of the socket 
+		var socket=new Socket("130.75.202.197",4446);
+		var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+		
+		
+		
+		//send trigger message
+		var myIdentifier=new User.UserIdentifier(7567);
+		
+		
+		var req=new Message.ServiceRegistrationRequest(myIdentifier,InetAddress.getByName("130.75.202.197"),4446);
+		var msg = new Message.ChatMessagePayload( myIdentifier, "TEST 3_1 SEND MESSAGE WHILE HAVING AN ACTIVE LEASE");
+		req.toStream(writer);
+		msg.toStream(writer);
+		writer.flush();
+		
+		
+		//closing
 
-		// implement your chat client logic here
+		writer.close();
+		socket.close();
 	}
 
 }
