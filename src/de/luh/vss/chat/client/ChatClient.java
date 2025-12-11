@@ -2,12 +2,13 @@ package de.luh.vss.chat.client;
 
 import de.luh.vss.chat.common.*;
 
-
 import java.io.*;
 import java.net.*;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+
 public class ChatClient {
+
     public static void main(String... args) {
         try {
             new ChatClient().start();
@@ -15,103 +16,122 @@ public class ChatClient {
             e.printStackTrace();
         }
     }
-    
-    
+
     public void start() throws IOException {
 
-        //Initialization
+        // ---------------- Initialization ----------------
         var socket = new Socket("130.75.202.197", 4448);
         var udpSocket = new DatagramSocket();
         udpSocket.setSoTimeout(500);
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-        boolean testLanched=false;
-        
+
         var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
         var reader = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+
         User.UserIdentifier MyUserIdentifier = new User.UserIdentifier(7567);
-        
-        
-        
-        //The lease
-        Message.ServiceRegistrationRequest req =new Message.ServiceRegistrationRequest(MyUserIdentifier,socket.getInetAddress(),socket.getPort());
+        InetAddress serverIp = InetAddress.getByName("130.75.202.197");
+        int serverPort = 5005;
+
+        LinkedHashMap<String, byte[]> pendingList = new LinkedHashMap<>();
+        byte[] buffer = new byte[2000];
+        DatagramPacket receivedPacket = new DatagramPacket(buffer, buffer.length);
+
+        boolean testLaunched = false;
+
+        // ---------------- Lease Registration with TCP----------------
+        Message.ServiceRegistrationRequest req =
+                new Message.ServiceRegistrationRequest(MyUserIdentifier, socket.getInetAddress(), socket.getPort());
         req.toStream(writer);
         writer.flush();
-        //trigger
-        new Message.ChatMessagePayload(MyUserIdentifier, "TEST 5_1 LOST MESSAGE HANDLING").toStream(new DataOutputStream(bout));
-		DatagramPacket triggerMsg = new DatagramPacket(bout.toByteArray(),bout.toByteArray().length , InetAddress.getByName("130.75.202.197"),5005);
-		udpSocket.send(triggerMsg);
-		bout.reset();
-        
-        byte[] buffer = new byte[2000];
-        DatagramPacket recievedPacket = new DatagramPacket(buffer,buffer.length);
-        LinkedHashMap<String, byte[]> pendingList = new LinkedHashMap<>();
 
-        
-        
-        
-        
+        // ---------------- Trigger with UDP ----------------
+        sendUdpMessage(
+                udpSocket,
+                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 5_1 LOST MESSAGE HANDLING"),
+                serverIp,
+                serverPort
+        );
+
+        // ---------------- Main Loop ----------------
         while (true) {
-            try {
-                udpSocket.receive(recievedPacket);
-            } catch (SocketTimeoutException e) {
-            	// if the socket does not receive any message until the timeout send the rest message
-	            for(String key  : pendingList.keySet()) {
-	            	
-	            	byte[] echoByte = pendingList.get(key);
-	            	DatagramPacket echoPacket = new DatagramPacket(echoByte, echoByte.length,InetAddress.getByName("130.75.202.197"), 5005);
-	            	udpSocket.send(echoPacket);
-	            	
-	            	
-	            }
-	            continue;    
-            } catch (IOException e) {
-                e.printStackTrace();
-                break; // exit loop on real I/O error
-            }
 
-            // process the packet 
-            ByteArrayInputStream bin = new ByteArrayInputStream(recievedPacket.getData(), 0, recievedPacket.getLength());
-            Message incoming = null;
-            try {
-                incoming = Message.parse(new DataInputStream(bin));
-            } catch (IOException | ReflectiveOperationException e) {
+            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
+
+            // -----  Sending pending message -----
+            if (incoming == null) {
+                for (byte[] storedBytes : pendingList.values()) {
+                    DatagramPacket resend = new DatagramPacket(storedBytes, storedBytes.length, serverIp, serverPort);
+                    udpSocket.send(resend);
+                }
                 continue;
             }
-            
+
+            // ----- Process received message -----
             if (incoming instanceof Message.ChatMessagePayload payloadedMessage) {
                 String text = payloadedMessage.getMessage();
                 System.out.println(text);
-                // remove Acknowledged message from our list
-                if (text.contains("Acknowledged message:")) {
-                	pendingList.remove(text);
-                    
-                }else if(text.contains("SUCCESSFULLY PASSED")) {// test succeeded
-                	
-                	break;
-                }else {// add  message to our list and send it
-                	
-                	// Save the **received bytes exactly as they came**
-                    byte[] receivedBytes = Arrays.copyOf( buffer, recievedPacket.getLength() );
-                    
-                    
 
-                    // Store in the map
+                if (text.contains("Acknowledged message:")) {
+                    pendingList.remove(text);
+                } else if (text.contains("SUCCESSFULLY PASSED")) {
+                    break; // test finished
+                } else {
+                    // save raw bytes exactly as received
+                    byte[] receivedBytes = Arrays.copyOf(buffer, receivedPacket.getLength());
                     pendingList.put(text, receivedBytes);
-               }
-               
+                }
             }
-            
-            if (pendingList.isEmpty() && testLanched) {
+
+            if (pendingList.isEmpty() && testLaunched) {
                 break;
             }
-
-            
         }
 
-	    writer.close();
-	    reader.close();
-	    socket.close();
-	    udpSocket.close();
+        // ---------------- Cleanup ----------------
+        writer.close();
+        reader.close();
+        socket.close();
+        udpSocket.close();
+    }
 
+    // ---------------- GENERAL UDP HELPERS ----------------
+
+    public void sendUdpMessage(DatagramSocket socket,
+                               Message message,
+                               InetAddress address,
+                               int port) throws IOException {
+
+        ByteArrayOutputStream bout = new ByteArrayOutputStream();
+        DataOutputStream dout = new DataOutputStream(bout);
+
+        message.toStream(dout);
+        dout.flush();
+
+        byte[] bytes = bout.toByteArray();
+        DatagramPacket packet = new DatagramPacket(bytes, bytes.length, address, port);
+        socket.send(packet);
+    }
+
+    public Message receiveUdpMessage(DatagramSocket socket,
+                                     DatagramPacket reusablePacket) throws IOException {
+
+        try {
+            socket.receive(reusablePacket);
+        } catch (SocketTimeoutException e) {
+            return null; // no message received
+        }
+
+        ByteArrayInputStream bin = new ByteArrayInputStream(
+                reusablePacket.getData(),
+                0,
+                reusablePacket.getLength()
+        );
+
+        DataInputStream din = new DataInputStream(bin);
+
+        try {
+            return Message.parse(din);
+        } catch (ReflectiveOperationException e) {
+            throw new IOException("Failed to parse incoming UDP message", e);
+        }
     }
 }
