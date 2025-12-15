@@ -9,7 +9,7 @@ import java.util.LinkedHashMap;
 
 public class ChatClient {
 
-    public static void main(String... args) {
+    public static void main(String... args) throws ReflectiveOperationException {
         try {
             new ChatClient().start();
         } catch (IOException e) {
@@ -17,74 +17,99 @@ public class ChatClient {
         }
     }
 
-    public void start() throws IOException {
+    public void start() throws IOException, ReflectiveOperationException {
 
         // ---------------- Initialization ----------------
         var socket = new Socket("130.75.202.197", 4448);
         var udpSocket = new DatagramSocket();
-        udpSocket.setSoTimeout(500);
+        udpSocket.setSoTimeout(1000);
 
         var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
         var reader = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-
+        
+        
+        
         User.UserIdentifier MyUserIdentifier = new User.UserIdentifier(7567);
         InetAddress serverIp = InetAddress.getByName("130.75.202.197");
-        int serverPort = 5005;
+        int serverPort = 7007;
 
         LinkedHashMap<String, byte[]> pendingList = new LinkedHashMap<>();
         byte[] buffer = new byte[2000];
         DatagramPacket receivedPacket = new DatagramPacket(buffer, buffer.length);
 
-        boolean testLaunched = false;
 
+
+        boolean isOnline = true;
         // ---------------- Lease Registration with TCP----------------
         Message.ServiceRegistrationRequest req =
                 new Message.ServiceRegistrationRequest(MyUserIdentifier, socket.getInetAddress(), socket.getPort());
         req.toStream(writer);
         writer.flush();
-
+       
+       
         // ---------------- Trigger with UDP ----------------
         sendUdpMessage(
                 udpSocket,
-                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 5_1 LOST MESSAGE HANDLING"),
+                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 5_2 BUFFERED MESSAGING WHILE OFFLINE"),
                 serverIp,
                 serverPort
         );
 
-        // ---------------- Main Loop ----------------
-        while (true) {
+        
+	     // ---------------- Main Loop ----------------
+	        while (true) {
+	
+	            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
+	
+	            // ----- Retry pending messages if online -----
+	            if (incoming == null && isOnline) {
+	                for (byte[] storedBytes : pendingList.values()) {
+	                    DatagramPacket resend = new DatagramPacket(storedBytes, storedBytes.length, serverIp, serverPort);
+	                    udpSocket.send(resend);
+	                }
+	                continue;
+	            }
+	
+	            // ----- Process received message -----
+	            if (incoming instanceof Message.ChatMessagePayload payloadedMessage) {
+	                String text = payloadedMessage.getMessage();
+	                System.out.println(text);
+	
+	                // ----- Handle acknowledgment -----
+	                if (text.startsWith("Acknowledged message: ")) {
+	                    String original = text.replace("Acknowledged message: ", "");
+	                    pendingList.remove(original);
+	                }
+	                // ----- Test successfully passed -----
+	                else if (text.contains("SUCCESSFULLY PASSED")) {
+	                    
+	                    break; // exit loop
+	                }
+	                // ----- User goes offline -----
+	                else if (text.contains("User is now Offline and cannot receive messages")) {
+	                    isOnline = false;
+	                }
+	                // ----- User comes online -----
+	                else if (text.contains("User is now Online and can receive messages")) {
+	                    isOnline = true;
+	                    // send all pending messages
+	                    for (byte[] storedBytes : pendingList.values()) {
+	                        DatagramPacket resend = new DatagramPacket(storedBytes, storedBytes.length, serverIp, serverPort);
+	                        udpSocket.send(resend);
+	                    }
+	                }
+	                // ----- Normal message: buffer it for acknowledgment -----
+	                else {
+	                    // save raw bytes exactly as received
+	                    byte[] receivedBytes = Arrays.copyOf(buffer, receivedPacket.getLength());
+	                    pendingList.put(text, receivedBytes);
+	                }
+	            }
+	
+	            
+	            
+	        }
 
-            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
-
-            // -----  Sending pending message -----
-            if (incoming == null) {
-                for (byte[] storedBytes : pendingList.values()) {
-                    DatagramPacket resend = new DatagramPacket(storedBytes, storedBytes.length, serverIp, serverPort);
-                    udpSocket.send(resend);
-                }
-                continue;
-            }
-
-            // ----- Process received message -----
-            if (incoming instanceof Message.ChatMessagePayload payloadedMessage) {
-                String text = payloadedMessage.getMessage();
-                System.out.println(text);
-
-                if (text.contains("Acknowledged message:")) {
-                    pendingList.remove(text);
-                } else if (text.contains("SUCCESSFULLY PASSED")) {
-                    break; // test finished
-                } else {
-                    // save raw bytes exactly as received
-                    byte[] receivedBytes = Arrays.copyOf(buffer, receivedPacket.getLength());
-                    pendingList.put(text, receivedBytes);
-                }
-            }
-
-            if (pendingList.isEmpty() && testLaunched) {
-                break;
-            }
-        }
 
         // ---------------- Cleanup ----------------
         writer.close();
@@ -117,7 +142,7 @@ public class ChatClient {
         try {
             socket.receive(reusablePacket);
         } catch (SocketTimeoutException e) {
-            return null; // no message received
+        	return null; // no message received
         }
 
         ByteArrayInputStream bin = new ByteArrayInputStream(
