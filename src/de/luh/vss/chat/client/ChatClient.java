@@ -4,8 +4,9 @@ import de.luh.vss.chat.common.*;
 
 import java.io.*;
 import java.net.*;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 public class ChatClient {
 
@@ -20,7 +21,7 @@ public class ChatClient {
     public void start() throws IOException, ReflectiveOperationException {
 
         // ---------------- Initialization ----------------
-        var socket = new Socket("130.75.202.197", 4448);
+        var socket = new Socket("130.75.202.197", 4449);
         var udpSocket = new DatagramSocket();
         udpSocket.setSoTimeout(1000);
 
@@ -31,15 +32,15 @@ public class ChatClient {
         
         User.UserIdentifier MyUserIdentifier = new User.UserIdentifier(7567);
         InetAddress serverIp = InetAddress.getByName("130.75.202.197");
-        int serverPort = 7007;
+        int serverPort = 8008;
 
-        LinkedHashMap<String, byte[]> pendingList = new LinkedHashMap<>();
+        List<MessageContent> pendingList = new ArrayList<>();
         byte[] buffer = new byte[2000];
         DatagramPacket receivedPacket = new DatagramPacket(buffer, buffer.length);
 
 
 
-        boolean isOnline = true;
+        
         // ---------------- Lease Registration with TCP----------------
         Message.ServiceRegistrationRequest req =
                 new Message.ServiceRegistrationRequest(MyUserIdentifier, socket.getInetAddress(), socket.getPort());
@@ -50,7 +51,7 @@ public class ChatClient {
         // ---------------- Trigger with UDP ----------------
         sendUdpMessage(
                 udpSocket,
-                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 5_2 BUFFERED MESSAGING WHILE OFFLINE"),
+                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 6_1 TIMESTAMP REORDERING"),
                 serverIp,
                 serverPort
         );
@@ -61,48 +62,36 @@ public class ChatClient {
 	
 	            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
 	
-	            // ----- Retry pending messages if online -----
-	            if (incoming == null && isOnline) {
-	                for (byte[] storedBytes : pendingList.values()) {
-	                    DatagramPacket resend = new DatagramPacket(storedBytes, storedBytes.length, serverIp, serverPort);
-	                    udpSocket.send(resend);
-	                }
-	                continue;
+	            
+	            if (incoming == null  ) {
+	            	
+	            	pendingList.sort(Comparator.comparingInt((m1)->m1.Min * 60 + m1.Sec));
+	            	
+	            	for(MessageContent m : pendingList) {
+	            		
+	            		System.out.println(m);
+	            		sendUdpMessage(
+	                            udpSocket,
+	                            new Message.ChatMessagePayload(MyUserIdentifier,m.All),
+	                            serverIp,
+	                            serverPort
+	                    );
+	            		
+	            		
+	            	}
+	            	
+	            	continue;
 	            }
 	
 	            // ----- Process received message -----
 	            if (incoming instanceof Message.ChatMessagePayload payloadedMessage) {
 	                String text = payloadedMessage.getMessage();
-	                System.out.println(text);
-	
-	                // ----- Handle acknowledgment -----
-	                if (text.startsWith("Acknowledged message: ")) {
-	                    String original = text.replace("Acknowledged message: ", "");
-	                    pendingList.remove(original);
-	                }
-	                // ----- Test successfully passed -----
-	                else if (text.contains("SUCCESSFULLY PASSED")) {
+	                System.out.println("recieved : "+text);
+	            	if (text.contains("SUCCESSFULLY PASSED")|| text.contains("FAILED") ) {
 	                    
 	                    break; // exit loop
-	                }
-	                // ----- User goes offline -----
-	                else if (text.contains("User is now Offline and cannot receive messages")) {
-	                    isOnline = false;
-	                }
-	                // ----- User comes online -----
-	                else if (text.contains("User is now Online and can receive messages")) {
-	                    isOnline = true;
-	                    // send all pending messages
-	                    for (byte[] storedBytes : pendingList.values()) {
-	                        DatagramPacket resend = new DatagramPacket(storedBytes, storedBytes.length, serverIp, serverPort);
-	                        udpSocket.send(resend);
-	                    }
-	                }
-	                // ----- Normal message: buffer it for acknowledgment -----
-	                else {
-	                    // save raw bytes exactly as received
-	                    byte[] receivedBytes = Arrays.copyOf(buffer, receivedPacket.getLength());
-	                    pendingList.put(text, receivedBytes);
+	                }else { 
+	                    pendingList.add(new MessageContent(text));
 	                }
 	            }
 	
@@ -159,4 +148,28 @@ public class ChatClient {
             throw new IOException("Failed to parse incoming UDP message", e);
         }
     }
+}
+
+class MessageContent {
+	String All;
+	String ID;
+	String Content;
+	String Timestamp;
+	int Min;
+	int Sec;
+	public MessageContent(String msg) {
+		String[] parts =  msg.split("\\|");
+		this.ID=parts[0];
+		this.Content=parts[1];
+		this.Timestamp=parts[2];
+		String[] parts2 =  msg.split(":");
+		this.Min=Integer.parseInt(parts2[1]);
+		this.Sec=Integer.parseInt(parts2[2]);
+		this.All=String.join("|",ID,Content,Timestamp);
+	}
+	
+	public String toString() {
+		return All;
+		
+	}
 }
