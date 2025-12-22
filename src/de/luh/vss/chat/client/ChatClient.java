@@ -24,7 +24,7 @@ public class ChatClient {
         var socket = new Socket("130.75.202.197", 4449);
         var udpSocket = new DatagramSocket();
         udpSocket.setSoTimeout(1000);
-
+        boolean Online=true;
         var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
         var reader = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
         
@@ -32,7 +32,7 @@ public class ChatClient {
         
         User.UserIdentifier MyUserIdentifier = new User.UserIdentifier(7567);
         InetAddress serverIp = InetAddress.getByName("130.75.202.197");
-        int serverPort = 8008;
+        int serverPort = 2002;
 
         List<MessageContent> pendingList = new ArrayList<>();
         byte[] buffer = new byte[2000];
@@ -51,7 +51,7 @@ public class ChatClient {
         // ---------------- Trigger with UDP ----------------
         sendUdpMessage(
                 udpSocket,
-                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 6_1 TIMESTAMP REORDERING"),
+                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 6_2 TIMESTAMP REORDERING WHILE OFFLINE"),
                 serverIp,
                 serverPort
         );
@@ -63,7 +63,7 @@ public class ChatClient {
 	            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
 	
 	            
-	            if (incoming == null  ) {
+	            if (incoming == null && Online) {
 	            	
 	            	pendingList.sort(Comparator.comparingInt((m1)->m1.Min * 60 + m1.Sec));
 	            	
@@ -90,6 +90,10 @@ public class ChatClient {
 	            	if (text.contains("SUCCESSFULLY PASSED")|| text.contains("FAILED") ) {
 	                    
 	                    break; // exit loop
+	                }else if(text.contains("Online")){
+	                	Online=true;
+	                }else if(text.contains("Offline")){
+	                	Online=false;
 	                }else { 
 	                    pendingList.add(new MessageContent(text));
 	                }
