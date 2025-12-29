@@ -10,6 +10,8 @@ import de.luh.vss.chat.common.User.UserIdentifier;
 public abstract class Message {
 
 	private static final String VERSION = "1.1";
+	public abstract void toStream(final DataOutputStream out) throws IOException;
+	public abstract MessageType getMessageType();
 
 	public static class ServiceRegistrationRequest extends Message {
 
@@ -44,6 +46,14 @@ public abstract class Message {
 
 		public UserIdentifier getUserIdentifier() {
 			return id;
+		}
+		
+		public InetAddress getAddress() {
+			return address;
+		}
+		
+		public int getPort() {
+			return port;
 		}
 
 		@Override
@@ -163,7 +173,5 @@ public abstract class Message {
 		return MessageType.fromInt(in.readInt(), in);
 	}
 
-	public abstract void toStream(final DataOutputStream out) throws IOException;
-
-	public abstract MessageType getMessageType();
+	
 }

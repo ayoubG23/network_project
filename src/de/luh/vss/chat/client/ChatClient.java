@@ -1,10 +1,12 @@
 package de.luh.vss.chat.client;
 
 import de.luh.vss.chat.common.*;
-
+import static de.luh.vss.chat.common.UdpUtils.receiveUdpMessage;
+import static de.luh.vss.chat.common.UdpUtils.sendUdpMessage;
 import java.io.*;
 import java.net.*;
 import java.util.ArrayList;
+
 import java.util.Comparator;
 import java.util.List;
 
@@ -21,9 +23,10 @@ public class ChatClient {
     public void start() throws IOException, ReflectiveOperationException {
 
         // ---------------- Initialization ----------------
-        var socket = new Socket("130.75.202.197", 4449);
+        var socket = new Socket("localhost", 5000);
+        System.out.println("connected to port" + socket.getPort() + " or  " +socket.getLocalPort());
         var udpSocket = new DatagramSocket();
-        udpSocket.setSoTimeout(1000);
+        udpSocket.setSoTimeout(2000);
         boolean Online=true;
         var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
         var reader = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
@@ -31,8 +34,8 @@ public class ChatClient {
         
         
         User.UserIdentifier MyUserIdentifier = new User.UserIdentifier(7567);
-        InetAddress serverIp = InetAddress.getByName("130.75.202.197");
-        int serverPort = 2002;
+        InetAddress serverIp = InetAddress.getByName("localhost");
+        int serverPort = 5000;
 
         List<MessageContent> pendingList = new ArrayList<>();
         byte[] buffer = new byte[2000];
@@ -40,32 +43,26 @@ public class ChatClient {
 
 
 
-        
+        	
         // ---------------- Lease Registration with TCP----------------
         Message.ServiceRegistrationRequest req =
-                new Message.ServiceRegistrationRequest(MyUserIdentifier, socket.getInetAddress(), socket.getPort());
+                new Message.ServiceRegistrationRequest(MyUserIdentifier, socket.getLocalAddress(), udpSocket.getLocalPort());
         req.toStream(writer);
         writer.flush();
        
        
-        // ---------------- Trigger with UDP ----------------
-        sendUdpMessage(
-                udpSocket,
-                new Message.ChatMessagePayload(MyUserIdentifier, "TEST 6_2 TIMESTAMP REORDERING WHILE OFFLINE"),
-                serverIp,
-                serverPort
-        );
+        
 
         
 	     // ---------------- Main Loop ----------------
 	        while (true) {
 	
 	            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
-	
 	            
 	            if (incoming == null && Online) {
 	            	
 	            	pendingList.sort(Comparator.comparingInt((m1)->m1.Min * 60 + m1.Sec));
+	            	
 	            	
 	            	for(MessageContent m : pendingList) {
 	            		
@@ -111,50 +108,12 @@ public class ChatClient {
         udpSocket.close();
     }
 
-    // ---------------- GENERAL UDP HELPERS ----------------
+    
 
-    public void sendUdpMessage(DatagramSocket socket,
-                               Message message,
-                               InetAddress address,
-                               int port) throws IOException {
-
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-        DataOutputStream dout = new DataOutputStream(bout);
-
-        message.toStream(dout);
-        dout.flush();
-
-        byte[] bytes = bout.toByteArray();
-        DatagramPacket packet = new DatagramPacket(bytes, bytes.length, address, port);
-        socket.send(packet);
-    }
-
-    public Message receiveUdpMessage(DatagramSocket socket,
-                                     DatagramPacket reusablePacket) throws IOException {
-
-        try {
-            socket.receive(reusablePacket);
-        } catch (SocketTimeoutException e) {
-        	return null; // no message received
-        }
-
-        ByteArrayInputStream bin = new ByteArrayInputStream(
-                reusablePacket.getData(),
-                0,
-                reusablePacket.getLength()
-        );
-
-        DataInputStream din = new DataInputStream(bin);
-
-        try {
-            return Message.parse(din);
-        } catch (ReflectiveOperationException e) {
-            throw new IOException("Failed to parse incoming UDP message", e);
-        }
-    }
+    
 }
 
-class MessageContent {
+class MessageContent implements Comparable<MessageContent> {
 	String All;
 	String ID;
 	String Content;
@@ -175,5 +134,11 @@ class MessageContent {
 	public String toString() {
 		return All;
 		
+	}
+
+	@Override
+	public int compareTo(MessageContent o) {
+		
+		return this.Sec - o.Sec;
 	}
 }
