@@ -1,144 +1,134 @@
 package de.luh.vss.chat.client;
 
-import de.luh.vss.chat.common.*;
 import static de.luh.vss.chat.common.UdpUtils.receiveUdpMessage;
 import static de.luh.vss.chat.common.UdpUtils.sendUdpMessage;
+
+import de.luh.vss.chat.common.*;
+import de.luh.vss.chat.common.User.UserIdentifier;
+
 import java.io.*;
 import java.net.*;
-import java.util.ArrayList;
-
-import java.util.Comparator;
-import java.util.List;
+import java.util.Scanner;
 
 public class ChatClient {
 
-    public static void main(String... args) throws ReflectiveOperationException {
-        try {
-            new ChatClient().start();
-        } catch (IOException e) {
-            e.printStackTrace();
+    private static final String SERVER_HOST = "localhost";
+    private static final int SERVER_PORT = 5000;
+
+    private final UserIdentifier myId;
+
+    public ChatClient(UserIdentifier myId) {
+        this.myId = myId;
+    }
+
+    public static void main(String[] args) throws Exception {
+
+        if (args.length != 1) {
+            System.out.println("Usage: ChatClient <userId>");
+            return;
         }
+
+        int id = Integer.parseInt(args[0]);
+        new ChatClient(new UserIdentifier(id)).start();
     }
 
-    public void start() throws IOException, ReflectiveOperationException {
+    public void start() throws Exception {
 
-        // ---------------- Initialization ----------------
-        var socket = new Socket("localhost", 5000);
-        System.out.println("connected to port" + socket.getPort() + " or  " +socket.getLocalPort());
-        var udpSocket = new DatagramSocket();
-        udpSocket.setSoTimeout(2000);
-        boolean Online=true;
-        var writer = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-        var reader = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-        
-        
-        
-        User.UserIdentifier MyUserIdentifier = new User.UserIdentifier(7567);
-        InetAddress serverIp = InetAddress.getByName("localhost");
-        int serverPort = 5000;
+        // ---------------- SOCKETS ----------------
 
-        List<MessageContent> pendingList = new ArrayList<>();
-        byte[] buffer = new byte[2000];
-        DatagramPacket receivedPacket = new DatagramPacket(buffer, buffer.length);
+        DatagramSocket udpSocket = new DatagramSocket();
+        Socket tcpSocket = new Socket(SERVER_HOST, SERVER_PORT);
 
+        System.out.println("Client started as user " + myId.id());
+        System.out.println("UDP port: " + udpSocket.getLocalPort());
 
+        // ---------------- TCP REGISTRATION ----------------
 
-        	
-        // ---------------- Lease Registration with TCP----------------
-        Message.ServiceRegistrationRequest req =
-                new Message.ServiceRegistrationRequest(MyUserIdentifier, socket.getLocalAddress(), udpSocket.getLocalPort());
-        req.toStream(writer);
-        writer.flush();
-       
-       
-        
+        DataOutputStream tcpOut =
+                new DataOutputStream(new BufferedOutputStream(tcpSocket.getOutputStream()));
 
-        
-	     // ---------------- Main Loop ----------------
-	        while (true) {
-	
-	            Message incoming = receiveUdpMessage(udpSocket, receivedPacket);
-	            
-	            if (incoming == null && Online) {
-	            	
-	            	pendingList.sort(Comparator.comparingInt((m1)->m1.Min * 60 + m1.Sec));
-	            	
-	            	
-	            	for(MessageContent m : pendingList) {
-	            		
-	            		System.out.println(m);
-	            		sendUdpMessage(
-	                            udpSocket,
-	                            new Message.ChatMessagePayload(MyUserIdentifier,m.All),
-	                            serverIp,
-	                            serverPort
-	                    );
-	            		
-	            		
-	            	}
-	            	
-	            	continue;
-	            }
-	
-	            // ----- Process received message -----
-	            if (incoming instanceof Message.ChatMessagePayload payloadedMessage) {
-	                String text = payloadedMessage.getMessage();
-	                System.out.println("recieved : "+text);
-	            	if (text.contains("SUCCESSFULLY PASSED")|| text.contains("FAILED") ) {
-	                    
-	                    break; // exit loop
-	                }else if(text.contains("Online")){
-	                	Online=true;
-	                }else if(text.contains("Offline")){
-	                	Online=false;
-	                }else { 
-	                    pendingList.add(new MessageContent(text));
-	                }
-	            }
-	
-	            
-	            
-	        }
+        Message.ServiceRegistrationRequest reg =
+                new Message.ServiceRegistrationRequest(
+                        myId,
+                        InetAddress.getLocalHost(),
+                        udpSocket.getLocalPort()
+                );
 
+        reg.toStream(tcpOut);
+        tcpOut.flush();
 
-        // ---------------- Cleanup ----------------
-        writer.close();
-        reader.close();
-        socket.close();
+        tcpSocket.close(); // registration done
+
+        // ---------------- UDP RECEIVER THREAD ----------------
+
+        Thread receiver = new Thread(() -> {
+            try {
+                byte[] buffer = new byte[2048];
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+
+                while (true) {
+                    Message msg = receiveUdpMessage(udpSocket, packet);
+
+                    if (msg instanceof Message.ChatMessagePayload chat) {
+                        System.out.println(
+                                "\n[from " + chat.getRecipient().id() + "] " +
+                                chat.getMessage()
+                        );
+                        System.out.print("> ");
+                    }
+                }
+            } catch (IOException e) {
+                System.out.println("Receiver stopped.");
+            }
+        });
+
+        receiver.setDaemon(true);
+        receiver.start();
+
+        // ---------------- USER INPUT LOOP ----------------
+
+        try (Scanner scanner = new Scanner(System.in)) {
+			InetAddress serverAddress = InetAddress.getByName(SERVER_HOST);
+
+			System.out.println("Enter messages in format:");
+			System.out.println("<targetId> <message>");
+			System.out.println("Use 0 as targetId for broadcast.");
+			System.out.println();
+
+			while (true) {
+			    System.out.print("> ");
+			    String line = scanner.nextLine();
+
+			    if (line.equalsIgnoreCase("exit")) {
+			        break;
+			    }
+
+			    int space = line.indexOf(' ');
+			    if (space == -1) {
+			        System.out.println("Invalid format.");
+			        continue;
+			    }
+
+			    int targetId = Integer.parseInt(line.substring(0, space));
+			    String message = line.substring(space + 1);
+
+			    Message.ChatMessagePayload chat =
+			            new Message.ChatMessagePayload(
+			                    new UserIdentifier(targetId),
+			                    message
+			            );
+
+			    sendUdpMessage(
+			            udpSocket,
+			            chat,
+			            serverAddress,
+			            SERVER_PORT
+			    );
+			}
+		}catch(Exception e){
+			System.out.println("Invalid format.");
+		}
         udpSocket.close();
+        System.out.println("Client terminated.");
     }
-
-    
-
-    
-}
-
-class MessageContent implements Comparable<MessageContent> {
-	String All;
-	String ID;
-	String Content;
-	String Timestamp;
-	int Min;
-	int Sec;
-	public MessageContent(String msg) {
-		String[] parts =  msg.split("\\|");
-		this.ID=parts[0];
-		this.Content=parts[1];
-		this.Timestamp=parts[2];
-		String[] parts2 =  msg.split(":");
-		this.Min=Integer.parseInt(parts2[1]);
-		this.Sec=Integer.parseInt(parts2[2]);
-		this.All=String.join("|",ID,Content,Timestamp);
-	}
-	
-	public String toString() {
-		return All;
-		
-	}
-
-	@Override
-	public int compareTo(MessageContent o) {
-		
-		return this.Sec - o.Sec;
-	}
 }
