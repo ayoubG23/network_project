@@ -30,23 +30,23 @@ public class Server {
 
         DatagramSocket udpSocket = new DatagramSocket(PORT);
         ServerSocket tcpServer = new ServerSocket(PORT);
+			ExecutorService tcpPool = Executors.newCachedThreadPool();
 
-        ExecutorService tcpPool = Executors.newCachedThreadPool();
+			System.out.println("Server started on port " + PORT);
 
-        System.out.println("Server started on port " + PORT);
-
-        // ---------------- TCP REGISTRATION THREAD ----------------
-        Thread tcpThread = new Thread(() -> {
-            while (true) {
-                try {
-                    Socket socket = tcpServer.accept();
-                    tcpPool.execute(new RegistrationHandler(socket));
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
-        tcpThread.start();
+			// ---------------- TCP REGISTRATION THREAD ----------------
+			Thread tcpThread = new Thread(() -> {
+			    while (true) {
+			        try {
+			            Socket socket = tcpServer.accept();
+			            tcpPool.execute(new RegistrationHandler(socket));
+			        } catch (IOException e) {
+			            e.printStackTrace();
+			        }
+			    }
+			});
+			tcpThread.start();
+		
 
         // ---------------- UDP MESSAGE ROUTER ----------------
         byte[] buffer = new byte[2048];
