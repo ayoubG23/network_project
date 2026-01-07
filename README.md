@@ -22,4 +22,9 @@ java de.luh.vss.chat.client.ChatClient <userId>
 
 5.You can repeat the previous step to have multiple clients
 
+It should look like this in Reality :
+
+
+<img width="1912" height="1019" alt="Capture d&#39;écran 2025-12-31 213710" src="https://github.com/user-attachments/assets/1a511859-998e-4659-9ce1-3d30bb27046d" />
+
 
