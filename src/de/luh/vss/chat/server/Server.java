@@ -54,24 +54,50 @@ public class Server {
 
         while (true) {
             Message msg = receiveUdpMessage(udpSocket, packet);
+            InetAddress senderAddress = packet.getAddress();
+            int senderPort = packet.getPort();
+            UserIdentifier sender = findSender(senderAddress, senderPort);
+            if (sender == null) {
+                System.out.println(
+                    "Rejected UDP packet from unregistered sender "
+                    + senderAddress + ":" + senderPort
+                );
+                continue;
+            }
 
             if (msg instanceof Message.ChatMessagePayload chat) {
-                routeMessage(udpSocket, chat);
+                routeMessage(udpSocket, chat , sender);
             }
         }
     }
+    
+    /**
+     * find sender to revert the map to find the true sender avoiding manipulation*/
 
-    // ---------------- ROUTING LOGIC ----------------
+    private UserIdentifier findSender(InetAddress senderAddress, int senderPort) {
+		for(ClientInfo clientInfo : clients.values()) {
+			if(clientInfo.address.equals(senderAddress) && clientInfo.udpPort == senderPort) {
+				return clientInfo.id;
+			}
+		}
+    	
+		return null;
+	}
+
+	// ---------------- ROUTING LOGIC ----------------
 
     private void routeMessage(DatagramSocket socket,
-                              Message.ChatMessagePayload msg) {
+                              Message.ChatMessagePayload msg, UserIdentifier sender) {
 
         UserIdentifier target = msg.getRecipient();
 
         // ---------- BROADCAST ----------
         if (target.equals(UserIdentifier.BROADCAST)) {
+        	System.out.println("User "+ sender.id() + " has broadcastet a message");
             clients.values().forEach(client -> {
                 try {
+                	
+                	if(client.id == sender) {return;}
                     sendUdpMessage(socket, msg, client.address, client.udpPort);
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -85,6 +111,7 @@ public class Server {
         if (client != null) {
             try {
                 sendUdpMessage(socket, msg, client.address, client.udpPort);
+                System.out.println("User "+ sender.id() + " has sent a message");
             } catch (IOException e) {
                 e.printStackTrace();
             }

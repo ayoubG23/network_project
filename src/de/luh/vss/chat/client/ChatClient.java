@@ -23,12 +23,16 @@ public class ChatClient {
 
     public static void main(String[] args) throws Exception {
 
-        if (args.length != 1) {
+        if (args.length != 1 ) {
             System.out.println("Usage: ChatClient <userId>");
             return;
         }
-
-        int id = Integer.parseInt(args[0]);
+        int id;
+        try{id = Integer.parseInt(args[0]);}catch(Exception e) {
+        	System.out.println("<userId> must be a number ");
+        	return;
+        }
+        
         new ChatClient(new UserIdentifier(id)).start();
     }
 
@@ -50,7 +54,7 @@ public class ChatClient {
         Message.ServiceRegistrationRequest reg =
                 new Message.ServiceRegistrationRequest(
                         myId,
-                        InetAddress.getLocalHost(),
+                        InetAddress.getByName("localhost"),
                         udpSocket.getLocalPort()
                 );
 
