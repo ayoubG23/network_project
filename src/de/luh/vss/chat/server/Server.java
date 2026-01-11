@@ -17,8 +17,9 @@ import java.util.concurrent.Executors;
 public class Server {
 
     private static final int PORT = 5000;
+    private static final long TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
-    /** All registered clients */
+    /** All registered (online) clients */
     private static final Map<UserIdentifier, ClientInfo> clients =
             new ConcurrentHashMap<>();
 
@@ -48,14 +49,33 @@ public class Server {
         });
         tcpThread.start();
 
+        // ---------------- CLEANUP THREAD ----------------
+        Thread cleanupThread = new Thread(() -> {
+            while (true) {
+                long now = System.currentTimeMillis();
+
+                clients.values().removeIf(client ->
+                        now - client.lastSeen > TIMEOUT_MS
+                );
+
+                try {
+                    Thread.sleep(30_000); // check every 30 seconds
+                } catch (InterruptedException ignored) {}
+            }
+        });
+        cleanupThread.setDaemon(true);
+        cleanupThread.start();
+
         // ---------------- UDP MESSAGE ROUTER ----------------
         byte[] buffer = new byte[2048];
         DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 
         while (true) {
             Message msg = receiveUdpMessage(udpSocket, packet);
+
             InetAddress senderAddress = packet.getAddress();
             int senderPort = packet.getPort();
+
             UserIdentifier sender = findSender(senderAddress, senderPort);
             if (sender == null) {
                 System.out.println(
@@ -66,38 +86,39 @@ public class Server {
             }
 
             if (msg instanceof Message.ChatMessagePayload chat) {
-                routeMessage(udpSocket, chat , sender);
+                routeMessage(udpSocket, chat, sender);
             }
         }
     }
-    
-    /**
-     * find sender to revert the map to find the true sender avoiding manipulation*/
 
-    private UserIdentifier findSender(InetAddress senderAddress, int senderPort) {
-		for(ClientInfo clientInfo : clients.values()) {
-			if(clientInfo.address.equals(senderAddress) && clientInfo.udpPort == senderPort) {
-				return clientInfo.id;
-			}
-		}
-    	
-		return null;
-	}
+    // ---------------- SENDER LOOKUP ----------------
 
-	// ---------------- ROUTING LOGIC ----------------
+    private UserIdentifier findSender(InetAddress address, int port) {
+        for (ClientInfo client : clients.values()) {
+            if (client.address.equals(address) && client.udpPort == port) {
+                return client.id;
+            }
+        }
+        return null;
+    }
+
+    // ---------------- ROUTING LOGIC ----------------
 
     private void routeMessage(DatagramSocket socket,
-                              Message.ChatMessagePayload msg, UserIdentifier sender) {
+                              Message.ChatMessagePayload msg,
+                              UserIdentifier sender) {
 
         UserIdentifier target = msg.getRecipient();
 
         // ---------- BROADCAST ----------
         if (target.equals(UserIdentifier.BROADCAST)) {
-        	System.out.println("User "+ sender.id() + " has broadcastet a message");
+            System.out.println("User " + sender.id() + " broadcasted a message");
+
             clients.values().forEach(client -> {
+                if (client.id.equals(sender)) {
+                    return; // skip sender
+                }
                 try {
-                	
-                	if(client.id == sender) {return;}
                     sendUdpMessage(socket, msg, client.address, client.udpPort);
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -111,7 +132,7 @@ public class Server {
         if (client != null) {
             try {
                 sendUdpMessage(socket, msg, client.address, client.udpPort);
-                System.out.println("User "+ sender.id() + " has sent a message");
+                System.out.println("User " + sender.id() + " sent a message");
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -138,16 +159,19 @@ public class Server {
 
                 if (msg instanceof Message.ServiceRegistrationRequest reg) {
 
-                    ClientInfo info = new ClientInfo(
-                            reg.getUserIdentifier(),
-                            reg.getAddress(),
-                            reg.getPort()
-                    );
+                    ClientInfo info = clients.get(reg.getUserIdentifier());
 
-                    clients.put(reg.getUserIdentifier(), info);
-
-                    System.out.println("Registered client: " + reg.getUserIdentifier()
-                            + " @ " + reg.getAddress() + ":" + reg.getPort());
+                    if (info == null) {
+                        info = new ClientInfo(
+                                reg.getUserIdentifier(),
+                                reg.getAddress(),
+                                reg.getPort()
+                        );
+                        clients.put(reg.getUserIdentifier(), info);
+                        System.out.println("Registered client: " + reg.getUserIdentifier());
+                    } else {
+                        info.refresh(); // heart beat
+                    }
                 }
 
             } catch (Exception e) {
@@ -166,11 +190,17 @@ public class Server {
         final UserIdentifier id;
         final InetAddress address;
         final int udpPort;
+        volatile long lastSeen;
 
         ClientInfo(UserIdentifier id, InetAddress address, int udpPort) {
             this.id = id;
             this.address = address;
             this.udpPort = udpPort;
+            this.lastSeen = System.currentTimeMillis();
+        }
+
+        void refresh() {
+            lastSeen = System.currentTimeMillis();
         }
     }
 }

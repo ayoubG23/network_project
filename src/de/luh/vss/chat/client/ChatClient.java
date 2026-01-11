@@ -23,48 +23,45 @@ public class ChatClient {
 
     public static void main(String[] args) throws Exception {
 
-        if (args.length != 1 ) {
+        if (args.length != 1) {
             System.out.println("Usage: ChatClient <userId>");
             return;
         }
+
         int id;
-        try{id = Integer.parseInt(args[0]);}catch(Exception e) {
-        	System.out.println("<userId> must be a number ");
-        	return;
+        try {
+            id = Integer.parseInt(args[0]);
+        } catch (Exception e) {
+            System.out.println("<userId> must be a number");
+            return;
         }
-        
+
         new ChatClient(new UserIdentifier(id)).start();
     }
 
     public void start() throws Exception {
 
-        // ---------------- SOCKETS ----------------
-
         DatagramSocket udpSocket = new DatagramSocket();
-        Socket tcpSocket = new Socket(SERVER_HOST, SERVER_PORT);
 
         System.out.println("Client started as user " + myId.id());
         System.out.println("UDP port: " + udpSocket.getLocalPort());
 
-        // ---------------- TCP REGISTRATION ----------------
+        // ---------------- INITIAL REGISTRATION ----------------
+        sendRegistration(udpSocket);
 
-        DataOutputStream tcpOut =
-                new DataOutputStream(new BufferedOutputStream(tcpSocket.getOutputStream()));
-
-        Message.ServiceRegistrationRequest reg =
-                new Message.ServiceRegistrationRequest(
-                        myId,
-                        InetAddress.getByName("localhost"),
-                        udpSocket.getLocalPort()
-                );
-
-        reg.toStream(tcpOut);
-        tcpOut.flush();
-
-        tcpSocket.close(); // registration done
+        // ---------------- HEARTBEAT THREAD ----------------
+        Thread heartbeat = new Thread(() -> {
+            try {
+                while (true) {
+                    sendRegistration(udpSocket);
+                    Thread.sleep(60_000); // every 60 seconds
+                }
+            } catch (Exception ignored) {}
+        });
+        heartbeat.setDaemon(true);
+        heartbeat.start();
 
         // ---------------- UDP RECEIVER THREAD ----------------
-
         Thread receiver = new Thread(() -> {
             try {
                 byte[] buffer = new byte[2048];
@@ -75,8 +72,7 @@ public class ChatClient {
 
                     if (msg instanceof Message.ChatMessagePayload chat) {
                         System.out.println(
-                                "\n[from " + chat.getRecipient().id() + "] " +
-                                chat.getMessage()
+                                "\n[from server] " + chat.getMessage()
                         );
                         System.out.print("> ");
                     }
@@ -90,49 +86,63 @@ public class ChatClient {
         receiver.start();
 
         // ---------------- USER INPUT LOOP ----------------
-
         try (Scanner scanner = new Scanner(System.in)) {
-			InetAddress serverAddress = InetAddress.getByName(SERVER_HOST);
 
-			System.out.println("Enter messages in format:");
-			System.out.println("<targetId> <message>");
-			System.out.println("Use 0 as targetId for broadcast.");
-			System.out.println();
+            InetAddress serverAddress = InetAddress.getByName(SERVER_HOST);
 
-			while (true) {
-			    System.out.print("> ");
-			    String line = scanner.nextLine();
+            System.out.println("Enter messages in format:");
+            System.out.println("<targetId> <message>");
+            System.out.println("Use 0 as targetId for broadcast.");
+            System.out.println();
 
-			    if (line.equalsIgnoreCase("exit")) {
-			        break;
-			    }
+            while (true) {
+                System.out.print("> ");
+                String line = scanner.nextLine();
 
-			    int space = line.indexOf(' ');
-			    if (space == -1) {
-			        System.out.println("Invalid format.");
-			        continue;
-			    }
+                if (line.equalsIgnoreCase("exit")) {
+                    break;
+                }
 
-			    int targetId = Integer.parseInt(line.substring(0, space));
-			    String message = line.substring(space + 1);
+                int space = line.indexOf(' ');
+                if (space == -1) {
+                    System.out.println("Invalid format.");
+                    continue;
+                }
 
-			    Message.ChatMessagePayload chat =
-			            new Message.ChatMessagePayload(
-			                    new UserIdentifier(targetId),
-			                    message
-			            );
+                int targetId = Integer.parseInt(line.substring(0, space));
+                String message = line.substring(space + 1);
 
-			    sendUdpMessage(
-			            udpSocket,
-			            chat,
-			            serverAddress,
-			            SERVER_PORT
-			    );
-			}
-		}catch(Exception e){
-			System.out.println("Invalid format.");
-		}
+                Message.ChatMessagePayload chat =
+                        new Message.ChatMessagePayload(
+                                new UserIdentifier(targetId),
+                                message
+                        );
+
+                sendUdpMessage(
+                        udpSocket,
+                        chat,
+                        serverAddress,
+                        SERVER_PORT
+                );
+            }
+        }
+
         udpSocket.close();
         System.out.println("Client terminated.");
+    }
+
+    private void sendRegistration(DatagramSocket udpSocket) throws Exception {
+        try (Socket tcpSocket = new Socket(SERVER_HOST, SERVER_PORT);
+             DataOutputStream out =
+                     new DataOutputStream(tcpSocket.getOutputStream())) {
+
+            new Message.ServiceRegistrationRequest(
+                    myId,
+                    InetAddress.getByName("localhost"),
+                    udpSocket.getLocalPort()
+            ).toStream(out);
+
+            out.flush();
+        }
     }
 }
